@@ -111,7 +111,13 @@ class AFMGrainAnalyzer:
         minor_axis = grain_props['minor_axis_length']
 
         equivalent_diameters = np.sqrt(4 * areas / np.pi)
-        aspect_ratios = major_axis / minor_axis
+        
+        # Handle division by zero for aspect ratio
+        with np.errstate(divide='ignore', invalid='ignore'):
+            aspect_ratios = major_axis / minor_axis
+            # Replace infinity or NaN with 0 (or another suitable default like 1.0)
+            # Typically for lines (minor_axis=0), aspect ratio is undefined or infinite
+            aspect_ratios = np.nan_to_num(aspect_ratios, nan=0.0, posinf=0.0, neginf=0.0)
 
         total_area_px = grain_labels.shape[0] * grain_labels.shape[1]
         grain_area_px = np.sum(areas)
