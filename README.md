@@ -1,4 +1,4 @@
-# Grain Analyzer Standalone
+# Grain Analyzer
 
 XQD 파일의 grain 분석을 수행하는 독립 실행 가능한 패키지입니다.
 
