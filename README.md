@@ -76,7 +76,7 @@ from grain_analyzer.analyze import analyze_single_file_with_grain_data
 ## 프로젝트 구조
 
 ```
-grain_analyzer_standalone/
+grain_analyzer/
 ├── grain_analyzer/
 │   ├── __init__.py
 │   ├── io.py               # XQD 파일 읽기

@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="grain-analyzer-standalone",
+    name="grain-analyzer",
     version="0.1.0",
     description="Standalone grain analysis tool for XQD files",
     author="jkkwoen",
