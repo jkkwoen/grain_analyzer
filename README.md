@@ -71,7 +71,6 @@ from grain_analyzer.analyze import analyze_single_file_with_grain_data
 - scikit-learn>=1.3.0
 - scikit-image>=0.20.0
 
-**주의**: 이 패키지는 `xqd-analyzer`에 의존하지 않습니다. 모든 필요한 코드가 포함되어 있습니다.
 
 ## 프로젝트 구조
 
