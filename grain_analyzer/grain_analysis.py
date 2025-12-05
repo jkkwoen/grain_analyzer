@@ -74,7 +74,7 @@ class AFMGrainAnalyzer:
         return labels
 
     def calculate_grain_statistics(self, grain_labels: np.ndarray, grain_props: Dict, 
-                                 meta: Optional[Dict] = None) -> Dict:
+                                 meta: Optional[Dict] = None, min_pixel_area: int = 4) -> Dict:
         """입자 통계 계산
         
         Parameters
@@ -85,6 +85,8 @@ class AFMGrainAnalyzer:
             입자 속성
         meta : dict, optional
             메타데이터 (픽셀 크기 정보)
+        min_pixel_area : int, optional
+            통계 계산에 포함할 최소 입자 면적 (픽셀 수). 기본값 4.
         
         Returns
         -------
@@ -94,21 +96,28 @@ class AFMGrainAnalyzer:
         if not grain_props or 'area' not in grain_props or len(grain_props['area']) == 0:
             return {}
 
-        areas = grain_props['area']
-        perimeters = grain_props['perimeter']
-        eccentricities = grain_props['eccentricity']
-        solidities = grain_props['solidity']
+        # Filter out very small grains
+        valid_indices = np.where(grain_props['area'] >= min_pixel_area)[0]
+        if len(valid_indices) == 0:
+            return {}
+
+        areas = grain_props['area'][valid_indices]
+        perimeters = grain_props['perimeter'][valid_indices]
+        eccentricities = grain_props['eccentricity'][valid_indices]
+        solidities = grain_props['solidity'][valid_indices]
 
         if 'centroid' in grain_props:
-            centroids = grain_props['centroid']
+            centroids = grain_props['centroid'][valid_indices]
         elif 'centroid-0' in grain_props and 'centroid-1' in grain_props:
-            centroids = [(grain_props['centroid-0'][i], grain_props['centroid-1'][i])
-                         for i in range(len(areas))]
+            c0 = grain_props['centroid-0'][valid_indices]
+            c1 = grain_props['centroid-1'][valid_indices]
+            centroids = [(c0[i], c1[i]) for i in range(len(areas))]
         else:
             centroids = [(0, 0)] * len(areas)
 
-        major_axis = grain_props['major_axis_length']
-        minor_axis = grain_props['minor_axis_length']
+        major_axis = grain_props['major_axis_length'][valid_indices]
+        minor_axis = grain_props['minor_axis_length'][valid_indices]
+        orientation = grain_props['orientation'][valid_indices]
 
         equivalent_diameters = np.sqrt(4 * areas / np.pi)
         
@@ -154,7 +163,7 @@ class AFMGrainAnalyzer:
                 'aspect_ratio': float(aspect_ratios[i]),
                 'eccentricity': float(eccentricities[i]),
                 'solidity': float(solidities[i]),
-                'orientation': float(grain_props['orientation'][i]),
+                'orientation': float(orientation[i]),
                 'centroid': centroids[i],
                 'major_axis_length_px': float(major_axis[i]),
                 'major_axis_length_nm': float(major_axis_nm[i]),
@@ -218,8 +227,8 @@ def segment_by_marker_growth(height: np.ndarray,
 
 
 def calculate_grain_statistics(grain_labels: np.ndarray, grain_props: Dict, 
-                             meta: Optional[Dict] = None) -> Dict:
+                             meta: Optional[Dict] = None, min_pixel_area: int = 4) -> Dict:
     """편의 함수: 입자 통계 계산"""
     analyzer = AFMGrainAnalyzer()
-    return analyzer.calculate_grain_statistics(grain_labels, grain_props, meta)
+    return analyzer.calculate_grain_statistics(grain_labels, grain_props, meta, min_pixel_area)
 
