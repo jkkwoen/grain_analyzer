@@ -2,9 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name="grain-analyzer",
-    version="0.1.0",
-    description="Standalone grain analysis tool for XQD files",
+    version="0.1.1",
+    description="Grain analysis tool for XQD files",
     author="jkkwoen",
+    url="https://github.com/jkkwoen/grain_analyzer",
     packages=find_packages(),
     install_requires=[
         "numpy>=1.24.0",

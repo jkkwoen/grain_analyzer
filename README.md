@@ -1,33 +1,50 @@
 # Grain Analyzer
 
-XQD 파일의 grain 분석을 수행하는 독립 실행 가능한 패키지입니다.
+A standalone package for performing grain analysis on XQD files.
 
-## 기능
+## Features
 
-- XQD 파일에서 grain 검출 및 분석
-- 개별 grain 데이터 추출
-- Grain 통계 계산
-- 원본 및 grain_mask 포함 PDF 생성
+- Grain detection and analysis from XQD files
+- Extraction of individual grain data
+- Calculation of grain statistics
+- Generation of PDF containing original and grain_mask
 
-## 설치
+## Installation
+
+### From Source
+
+Run the following command in the root directory of the project:
 
 ```bash
-# 가상환경 생성 (선택사항)
+pip install .
+```
+
+### From GitHub
+
+You can install directly from GitHub:
+
+```bash
+pip install git+https://github.com/jkkwoen/grain_analyzer.git
+```
+
+### For Development
+
+If you plan to modify the code, install in editable mode:
+
+```bash
+# Create virtual environment (Optional)
 python3 -m venv .venv
 source .venv/bin/activate  # Linux/Mac
-# 또는
+# or
 .venv\Scripts\activate  # Windows
 
-# 의존성 설치
-pip install -r requirements.txt
-
-# 패키지 설치
+# Install in editable mode
 pip install -e .
 ```
 
-## 사용법
+## Usage
 
-### Python 스크립트로 사용
+### Using as a Python script
 
 ```python
 from pathlib import Path
@@ -46,23 +63,23 @@ if success:
     print(f"First grain area: {individual_grain_data[0]['area_nm2']} nm²")
 ```
 
-### 직접 import하여 사용
+### Importing directly
 
 ```python
 from pathlib import Path
 from grain_analyzer import analyze_single_file_with_grain_data
 
-# 또는
+# or
 from grain_analyzer.analyze import analyze_single_file_with_grain_data
 ```
 
-## 출력
+## Output
 
-- **PDF 파일**: 원본 높이 데이터와 grain_mask 오버레이를 포함한 플롯
-- **개별 grain 데이터**: 각 grain의 상세 정보 (면적, 직경, 중심점, peak 위치 등)
-- **Grain 통계**: 전체 grain에 대한 통계 정보
+- **PDF File**: Plot including original height data and grain_mask overlay
+- **Individual Grain Data**: Detailed information for each grain (area, diameter, centroid, peak position, etc.)
+- **Grain Statistics**: Statistical information for all grains
 
-## 의존성
+## Dependencies
 
 - Python 3.8+
 - numpy>=1.24.0
@@ -72,20 +89,19 @@ from grain_analyzer.analyze import analyze_single_file_with_grain_data
 - scikit-image>=0.20.0
 
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 grain_analyzer/
 ├── grain_analyzer/
 │   ├── __init__.py
-│   ├── io.py               # XQD 파일 읽기
-│   ├── corrections.py      # 보정 함수들
-│   ├── grain_analysis.py   # Grain 분석 함수들
-│   ├── utils.py            # 유틸리티 함수들
-│   ├── afm_data_wrapper.py # AFMData 래퍼 클래스
-│   └── analyze.py          # 메인 분석 함수
+│   ├── io.py               # Read XQD files
+│   ├── corrections.py      # Correction functions
+│   ├── grain_analysis.py   # Grain analysis functions
+│   ├── utils.py            # Utility functions
+│   ├── afm_data_wrapper.py # AFMData wrapper class
+│   └── analyze.py          # Main analysis function
 ├── requirements.txt
 ├── setup.py
 └── README.md
 ```
-
