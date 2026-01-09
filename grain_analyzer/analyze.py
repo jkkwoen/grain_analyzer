@@ -1,25 +1,90 @@
 """
 Main analysis function for grain analysis
+
+High-level pipeline that combines segmentation and statistics.
+
+사용 예시:
+    >>> from grain_analyzer import analyze_grains
+    >>> result = analyze_grains(height, meta, method="classical")
 """
 
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 import matplotlib.pyplot as plt
-import math
 
 from .afm_data_wrapper import AFMData
-from .utils import nm2_to_px_area, apply_grain_excluded_flat_correction
-from .grain_analysis import segment_by_marker_growth, calculate_grain_statistics
-from skimage import measure
+from .segmentation import segment_classical, segment_stardist
+from .statistics import calculate_grain_statistics, get_individual_grains
+from skimage.segmentation import find_boundaries
+
+
+def analyze_grains(
+    height: np.ndarray,
+    meta: Optional[Dict] = None,
+    *,
+    method: str = "classical",
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Analyze grains in height image
+    
+    Parameters
+    ----------
+    height : np.ndarray
+        Height image (2D, nm units)
+    meta : dict, optional
+        Metadata with 'pixel_nm' key
+    method : str
+        Segmentation method: 'classical' or 'stardist' (default: 'classical')
+    **kwargs
+        Additional arguments passed to segmentation function
+    
+    Returns
+    -------
+    result : dict
+        Analysis result containing:
+        - labels: np.ndarray - Label image
+        - stats: dict - Overall statistics
+        - grains: List[dict] - Individual grain data
+        - method: str - Method used
+    
+    Examples
+    --------
+    >>> result = analyze_grains(height, meta, method="classical")
+    >>> print(f"Found {result['stats']['num_grains']} grains")
+    
+    >>> # With StarDist
+    >>> result = analyze_grains(height, meta, method="stardist", prob_thresh=0.6)
+    """
+    # Select segmentation method
+    if method == "classical":
+        labels = segment_classical(height, meta, **kwargs)
+    elif method == "stardist":
+        labels = segment_stardist(height, meta, **kwargs)
+    else:
+        raise ValueError(f"Unknown method: {method}. Use 'classical' or 'stardist'")
+    
+    # Calculate statistics
+    stats = calculate_grain_statistics(labels, height, meta)
+    grains = get_individual_grains(labels, height, meta)
+    
+    return {
+        "labels": labels,
+        "stats": stats,
+        "grains": grains,
+        "method": method,
+    }
 
 
 def analyze_single_file_with_grain_data(
     xqd_file: Path, 
     output_dir: Path,
+    method: str = "classical",
     gaussian_sigma: float = 1.0,
     min_area_nm2: float = 78.5,
-    min_peak_separation_nm: float = 10.0
+    min_peak_separation_nm: float = 10.0,
+    **kwargs
 ) -> Tuple[bool, Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[str]]:
     """
     Analyze a single XQD file and return grain data and statistics.
@@ -30,22 +95,23 @@ def analyze_single_file_with_grain_data(
         Path to the XQD file
     output_dir : Path
         Output directory for PDF file
+    method : str
+        Segmentation method: 'classical' or 'stardist' (default: 'classical')
     gaussian_sigma : float
-        Gaussian smoothing sigma
+        Gaussian smoothing sigma (for classical method)
     min_area_nm2 : float
         Minimum grain area in nm²
     min_peak_separation_nm : float
-        Minimum peak separation in nm
+        Minimum peak separation in nm (for classical method)
+    **kwargs
+        Additional arguments for segmentation
     
     Returns
     -------
     Tuple[bool, Optional[Dict], Optional[Dict], Optional[str]]
         (success, individual_grain_data, grain_stats, pdf_path)
-        - success: Whether analysis was successful
-        - individual_grain_data: List of dictionaries with individual grain properties
-        - grain_stats: Dictionary with overall grain statistics
-        - pdf_path: Path to the generated PDF file
     """
+    from .utils import nm2_to_px_area
     
     print(f"📊 Processing: {xqd_file.name}")
     
@@ -58,119 +124,58 @@ def analyze_single_file_with_grain_data(
         file_output_dir = output_dir / xqd_file.stem
         file_output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Grain Analysis
-        print("   🔬 Performing grain analysis...")
-        
-        # Apply corrections using AFMData
+        # Apply corrections
+        print("   🔬 Applying corrections...")
         data.first_correction().second_correction().third_correction()
         data.flat_correction("line_by_line").baseline_correction("min_to_zero")
         
-        # Get corrected data and metadata
+        # Get data
         height_corrected = data.get_data()
         meta = data.get_meta()
         height_raw = data.get_raw_data()
         
         pixel_nm = meta.get("pixel_nm", (1.0, 1.0))
-        xp_nm, yp_nm = float(pixel_nm[0]), float(pixel_nm[1])
         x_size_nm, y_size_nm = meta.get("scan_size_nm", (height_raw.shape[1], height_raw.shape[0]))
         extent = [0, x_size_nm, 0, y_size_nm]
-        px_area_nm2 = xp_nm * yp_nm
         
-        # Grain detection
+        # Calculate min_area_px
         min_area_px = nm2_to_px_area(min_area_nm2, pixel_nm)
-        from skimage.filters import gaussian, threshold_otsu
-        from skimage.morphology import remove_small_objects
-        from scipy import ndimage as ndi
-        from skimage.feature import peak_local_max
-        from sklearn.cluster import DBSCAN
-        from skimage.segmentation import find_boundaries
         
-        h_smooth = gaussian(height_corrected, sigma=gaussian_sigma, preserve_range=True)
-        thr = threshold_otsu(h_smooth)
-        binary = h_smooth > thr
-        binary = remove_small_objects(binary, min_size=min_area_px)
+        # Perform segmentation
+        print(f"   🔬 Performing {method} grain segmentation...")
         
-        # Distance transform and peak detection
-        distance = ndi.distance_transform_edt(binary)
-        avg_px_nm = float(np.mean(pixel_nm)) if np.all(np.isfinite(pixel_nm)) else 1.0
-        approx_min_radius_px = max(1, int(round((10.0 / avg_px_nm) / 2.0)))
-        
-        coords = peak_local_max(
-            distance,
-            labels=binary,
-            min_distance=approx_min_radius_px,
-            exclude_border=False,
-            footprint=None,
-            threshold_abs=0.0,
-            threshold_rel=0.0,
-        )
-        
-        rep_coords = np.zeros((0, 2), dtype=int)
-        
-        if coords.size > 0:
-            coords_nm = np.column_stack([coords[:, 0] * yp_nm, coords[:, 1] * xp_nm])
-            try:
-                clustering = DBSCAN(eps=float(min_peak_separation_nm), min_samples=1, metric="euclidean").fit(coords_nm)
-                labels_db = clustering.labels_
-                rep_indices = []
-                for lab in np.unique(labels_db):
-                    idxs = np.where(labels_db == lab)[0]
-                    best_i = idxs[np.argmax(distance[coords[idxs, 0], coords[idxs, 1]])]
-                    rep_indices.append(best_i)
-                rep_coords = coords[np.array(rep_indices)]
-            except Exception:
-                rep_coords = coords
-        
-        # Voronoi segmentation
-        voronoi_labels = segment_by_marker_growth(
-            height_corrected,
-            rep_coords,
-            meta=meta,
-            mask=binary,
-            max_radius_nm=None,
-            anisotropic_nm_metric=True,
-        )
-        boundaries = find_boundaries(voronoi_labels, mode="outer") if voronoi_labels.max() > 0 else np.zeros_like(voronoi_labels, dtype=bool)
-        
-        # Generate grain mask
-        grain_mask = voronoi_labels > 0
-        unique_labels = np.unique(voronoi_labels)
-        unique_labels = unique_labels[unique_labels > 0]
-        
-        print(f"   ✓ Grain analysis completed: {len(unique_labels)} grains detected")
-        
-        # 2. Calculate grain statistics
-        print("   📊 Calculating grain statistics...")
-        
-        # Get region properties for grain statistics
-        if int(voronoi_labels.max()) > 0:
-            grain_props = measure.regionprops_table(
-                voronoi_labels,
-                intensity_image=height_corrected,
-                properties=['area', 'centroid', 'eccentricity',
-                           'major_axis_length', 'minor_axis_length',
-                           'orientation', 'perimeter', 'solidity']
+        if method == "classical":
+            labels = segment_classical(
+                height_corrected,
+                meta,
+                gaussian_sigma=gaussian_sigma,
+                min_area_px=min_area_px,
+                min_peak_separation_nm=min_peak_separation_nm,
             )
+        elif method == "stardist":
+            labels = segment_stardist(height_corrected, meta, **kwargs)
         else:
-            grain_props = {}
+            raise ValueError(f"Unknown method: {method}")
         
-        # Calculate overall grain statistics
-        grain_stats = calculate_grain_statistics(voronoi_labels, grain_props, meta)
+        num_grains = int(labels.max())
+        print(f"   ✓ Segmentation completed: {num_grains} grains detected")
         
-        # 3. Extract individual grain data
-        print("   📋 Extracting individual grain data...")
-        individual_grain_data = _extract_individual_grain_data(
-            voronoi_labels, height_corrected, meta, rep_coords, pixel_nm
-        )
+        # Calculate statistics
+        print("   📊 Calculating grain statistics...")
+        grain_stats = calculate_grain_statistics(labels, height_corrected, meta)
+        individual_grain_data = get_individual_grains(labels, height_corrected, meta)
         
-        # 4. Create PDF with original and grain_mask plots
+        # Create PDF
         print("   📄 Creating PDF plot...")
+        grain_mask = labels > 0
+        boundaries = find_boundaries(labels, mode="outer") if num_grains > 0 else np.zeros_like(labels, dtype=bool)
+        
         pdf_path = _create_grain_analysis_pdf(
-            height_raw, height_corrected, grain_mask, voronoi_labels, boundaries,
-            xqd_file.stem, file_output_dir, extent, len(unique_labels)
+            height_raw, height_corrected, grain_mask, labels, boundaries,
+            xqd_file.stem, file_output_dir, extent, num_grains, method
         )
         
-        print(f"   ✅ All analyses completed for {xqd_file.name}")
+        print(f"   ✅ Analysis completed for {xqd_file.name}")
         return True, individual_grain_data, grain_stats, str(pdf_path)
         
     except Exception as e:
@@ -178,133 +183,6 @@ def analyze_single_file_with_grain_data(
         import traceback
         traceback.print_exc()
         return False, None, None, None
-
-
-def _extract_individual_grain_data(
-    labels: np.ndarray,
-    height_nm: np.ndarray,
-    meta: Dict[str, Any],
-    rep_coords: np.ndarray,
-    pixel_nm: Tuple[float, float]
-) -> List[Dict[str, Any]]:
-    """Extract individual grain data as list of dictionaries."""
-    
-    if int(labels.max()) == 0:
-        return []
-    
-    xp_nm, yp_nm = float(pixel_nm[0]), float(pixel_nm[1])
-    px_area_nm2 = xp_nm * yp_nm
-    
-    # Get region properties
-    stats = measure.regionprops_table(
-        labels,
-        intensity_image=height_nm,
-        properties=[
-            'label', 'area', 'eccentricity', 'centroid', 'perimeter',
-            'major_axis_length', 'minor_axis_length', 'orientation',
-            'convex_area', 'solidity'
-        ]
-    )
-    
-    # Map rep_coords to labels
-    label_to_peak_rc: Dict[int, Tuple[int, int]] = {}
-    if rep_coords is not None and rep_coords.size > 0:
-        for r, c in np.asarray(rep_coords, dtype=int):
-            if 0 <= r < labels.shape[0] and 0 <= c < labels.shape[1]:
-                lab = int(labels[r, c])
-                if lab > 0 and lab not in label_to_peak_rc:
-                    label_to_peak_rc[lab] = (r, c)
-    
-    individual_grains = []
-    labels_list = stats['label']
-    
-    for idx in range(len(labels_list)):
-        lab_id = int(labels_list[idx])
-        if lab_id <= 0:
-            continue
-        
-        mask = (labels == lab_id)
-        if not np.any(mask):
-            continue
-        
-        # Basic properties
-        area_px = float(stats['area'][idx])
-        area_nm2 = area_px * px_area_nm2
-        diameter_nm = 2.0 * math.sqrt(area_nm2 / math.pi) if area_nm2 > 0 else 0.0
-        eq_radius_nm = diameter_nm / 2.0
-        
-        # Centroid
-        cent_y = stats['centroid-0'][idx]
-        cent_x = stats['centroid-1'][idx]
-        cx_nm = float(cent_x) * xp_nm
-        cy_nm = float(cent_y) * yp_nm
-        centroid_h_nm = float(np.mean(height_nm[mask]))
-        
-        # Peak
-        if lab_id in label_to_peak_rc:
-            pr, pc = label_to_peak_rc[lab_id]
-        else:
-            ys, xs = np.nonzero(mask)
-            if ys.size > 0:
-                vals = height_nm[ys, xs]
-                kmax = int(np.argmax(vals))
-                pr, pc = int(ys[kmax]), int(xs[kmax])
-            else:
-                pr, pc = int(round(cent_y)), int(round(cent_x))
-        
-        peak_x_nm = float(pc) * xp_nm
-        peak_y_nm = float(pr) * yp_nm
-        peak_h_nm = float(height_nm[pr, pc])
-        peak_to_centroid_dist_nm = float(math.hypot(peak_x_nm - cx_nm, peak_y_nm - cy_nm))
-        
-        # Volume
-        vol_nm3 = float(np.sum(height_nm[mask]) * px_area_nm2)
-        
-        # Shape properties
-        major_axis_px = float(stats['major_axis_length'][idx])
-        minor_axis_px = float(stats['minor_axis_length'][idx])
-        major_axis_nm = major_axis_px * math.sqrt(px_area_nm2)
-        minor_axis_nm = minor_axis_px * math.sqrt(px_area_nm2)
-        aspect_ratio = major_axis_px / minor_axis_px if minor_axis_px > 0 else 0.0
-        
-        # Height statistics
-        vals_mask = height_nm[mask]
-        height_mean = float(np.mean(vals_mask))
-        height_std = float(np.std(vals_mask))
-        height_min = float(np.min(vals_mask))
-        height_max = float(np.max(vals_mask))
-        
-        grain_data = {
-            'grain_id': int(lab_id),
-            'area_px': area_px,
-            'area_nm2': area_nm2,
-            'diameter_nm': diameter_nm,
-            'equivalent_radius_nm': eq_radius_nm,
-            'volume_nm3': vol_nm3,
-            'centroid_x_nm': cx_nm,
-            'centroid_y_nm': cy_nm,
-            'centroid_height_nm': centroid_h_nm,
-            'peak_x_nm': peak_x_nm,
-            'peak_y_nm': peak_y_nm,
-            'peak_height_nm': peak_h_nm,
-            'peak_to_centroid_dist_nm': peak_to_centroid_dist_nm,
-            'major_axis_nm': major_axis_nm,
-            'minor_axis_nm': minor_axis_nm,
-            'aspect_ratio': aspect_ratio,
-            'orientation_deg': float(stats['orientation'][idx]) * 180.0 / math.pi,
-            'perimeter_nm': float(stats['perimeter'][idx]) * math.sqrt(px_area_nm2),
-            'eccentricity': float(stats['eccentricity'][idx]),
-            'solidity': float(stats['solidity'][idx]),
-            'convex_area_nm2': float(stats['convex_area'][idx]) * px_area_nm2,
-            'height_mean_nm': height_mean,
-            'height_std_nm': height_std,
-            'height_min_nm': height_min,
-            'height_max_nm': height_max,
-        }
-        
-        individual_grains.append(grain_data)
-    
-    return individual_grains
 
 
 def _create_grain_analysis_pdf(
@@ -316,7 +194,8 @@ def _create_grain_analysis_pdf(
     stem: str,
     output_dir: Path,
     extent: List[float],
-    num_grains: int
+    num_grains: int,
+    method: str = "classical"
 ) -> Path:
     """Create PDF with original and grain_mask plots."""
     
@@ -356,7 +235,7 @@ def _create_grain_analysis_pdf(
     
     axes[1].set_xlabel('X [nm]')
     axes[1].set_ylabel('Y [nm]')
-    axes[1].set_title(f'Grain Mask Overlay (N={num_grains} grains)')
+    axes[1].set_title(f'Grain Mask Overlay ({method}, N={num_grains})')
     
     fig.suptitle(f'Grain Analysis - {stem}', fontsize=14, fontweight='bold')
     plt.tight_layout()
@@ -367,4 +246,3 @@ def _create_grain_analysis_pdf(
     print(f"   ✓ PDF saved: {pdf_path}")
     
     return pdf_path
-
